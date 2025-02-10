@@ -4,7 +4,6 @@ import {
   type Firestore as FirebaseFirestore,
   CollectionReference,
   Query,
-  WhereFilterOp,
   collection,
   deleteDoc,
   doc,
@@ -15,6 +14,7 @@ import {
   setDoc,
   updateDoc,
   where,
+  QueryFieldFilterConstraint,
 } from "firebase/firestore";
 
 import {
@@ -44,21 +44,30 @@ export class FirestoreDatabase {
   ): Record<string, unknown> {
     return Object.entries(conditions).reduce((acc, [key, value]) => {
       const newKey = prefix ? `${prefix}.${key}` : key;
-  
+
       if (typeof value === "object" && value !== null) {
-        if ("operator" in value || "not" in value) {
+        if (
+          key.startsWith("$") ||
+          "$contains" in value ||
+          "$greaterThan" in value ||
+          "$lessThan" in value ||
+          "$startsWith" in value ||
+          "$endsWith" in value
+        ) {
           acc[newKey] = value;
         } else {
-          Object.assign(acc, this.flattenWhereConditions(value as WhereCondition<T>, newKey));
+          Object.assign(
+            acc,
+            this.flattenWhereConditions(value as WhereCondition<T>, newKey)
+          );
         }
       } else {
         acc[newKey] = value;
       }
-  
+
       return acc;
     }, {} as Record<string, unknown>);
   }
-  
 
   private buildWhereQuery<T>(
     collectionRef: CollectionReference,
@@ -71,28 +80,50 @@ export class FirestoreDatabase {
     let q = query(collectionRef);
     const flattened = this.flattenWhereConditions(conditions);
 
-    Object.entries(flattened).forEach(([field, condition]) => {
-      if (
-        typeof condition === "object" &&
-        condition !== null &&
-        "operator" in condition
-      ) {
-        const { operator, value } = condition as {
-          operator: WhereFilterOp;
-          value: unknown;
-        };
-        q = query(q, where(field, operator, value));
-      } else if (
-        typeof condition === "object" &&
-        condition !== null &&
-        "not" in condition
-      ) {
-        const { not } = condition as { not: unknown };
-        q = query(q, where(field, "!=", not));
-      } else {
-        q = query(q, where(field, "==", condition));
+    const conditionHandlers: Record<
+      string,
+      (
+        field: string,
+        value: unknown
+      ) => QueryFieldFilterConstraint | QueryFieldFilterConstraint[]
+    > = {
+      $not: (field: string, value: unknown) => where(field, "!=", value),
+      $contains: (field: string, value: unknown) =>
+        where(field, "array-contains", value),
+      $greaterThan: (field: string, value: unknown) => where(field, ">", value),
+      $lessThan: (field: string, value: unknown) => where(field, "<", value),
+      $startsWith: (field: string, value: unknown) => [
+        where(field, ">=", value),
+        where(field, "<=", (value as string) + "\uf8ff"),
+      ],
+      $endsWith: (field: string, value: unknown) => [
+        where(field, ">=", value),
+        where(field, "<=", (value as string) + "\uf8ff"),
+      ],
+    };
+
+    Object.entries(flattened).forEach(
+      ([field, condition]: [string, unknown]) => {
+        if (typeof condition === "object" && condition !== null) {
+          Object.entries(condition).forEach(
+            ([key, value]: [string, unknown]) => {
+              if (conditionHandlers[key as keyof typeof conditionHandlers]) {
+                const queryPart = conditionHandlers[
+                  key as keyof typeof conditionHandlers
+                ](field, value);
+                if (Array.isArray(queryPart)) {
+                  queryPart.forEach((qPart) => (q = query(q, qPart)));
+                } else {
+                  q = query(q, queryPart);
+                }
+              }
+            }
+          );
+        } else {
+          q = query(q, where(field, "==", condition));
+        }
       }
-    });
+    );
 
     return q;
   }
