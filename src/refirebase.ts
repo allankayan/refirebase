@@ -25,16 +25,18 @@ export class Refirebase {
   public readonly analytics: FirebaseAnalytics;
 
   constructor(config: FirebaseConfig) {
+    const keys = ["apiKey", "authDomain", "projectId", "storageBucket", "messagingSenderId", "appId"];
+
     if (
-      !config.apiKey ||
-      !config.authDomain ||
-      !config.projectId ||
-      !config.storageBucket ||
-      !config.messagingSenderId ||
-      !config.appId
+      !config ||
+      typeof config !== "object" ||
+      Array.isArray(config) ||
+      keys.some((key) => typeof config[key as keyof FirebaseConfig] !== "string")
     ) {
+      const missingKeys = keys.filter((key) => !config[key as keyof FirebaseConfig]).sort();
+
       throw new Error(
-        "Missing Firebase configuration keys. Please provide all required keys."
+        `Refirebase: Missing required keys in config: ${missingKeys.join(", ")}`
       );
     }
 
@@ -54,12 +56,16 @@ export class Refirebase {
 }
 
 export type {
+  // Default
   FirebaseConfig as RefirebaseConfig,
   FirebaseApp as RefirebaseApp,
+  // Databases
   FirestoreDatabase as RefirebaseFirestore,
   RealtimeDatabase as RefirebaseRealtime,
   StorageFirebase as RefirebaseStorage,
+  // Services
   FirebaseAuth as RefirebaseAuth,
   FirebaseAnalytics as RefirebaseAnalytics,
+  // Others
   WhereCondition as RefirebaseWhereCondition,
 };
